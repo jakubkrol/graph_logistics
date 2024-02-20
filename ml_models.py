@@ -11,6 +11,7 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 
@@ -144,31 +145,58 @@ class GaussianProcessRegressorModel:
         self.mode = mode
         self.gpr = gpr if gpr else GaussianProcessRegressor(kernel=C(1.0, (1e-3, 1e3)) * RBF(10, (1e-2, 1e2)))
         self.mlflow_config = mlflow_config if mlflow_config else {'enabled': True, 'experiment_name': f'GPR_{self.mode}'}
+        self.x_scaler = StandardScaler()
+        self.y_scaler = StandardScaler()
+        self.predictions = None
+        self.y_test_original = None
 
     def preprocess_data(self, data):
         X = data[['MedDist', 'MeanHosp', 'Cluster', 'Centre']]
-        y = data[self.mode]  # Assuming this mode now refers to a column with positive integers
-        return train_test_split(X, y, test_size=0.15, random_state=42)
+        y = data[self.mode].values.reshape(-1, 1)  # Reshape y to 2D array for scaler
+
+        # Normalize X
+        X_scaled = self.x_scaler.fit_transform(X)
+
+        # Normalize y
+        y_scaled = self.y_scaler.fit_transform(y)
+
+        return train_test_split(X_scaled, y_scaled, test_size=0.15, random_state=42)
 
     def train_and_evaluate(self, X_train, y_train, X_test, y_test):
+        self.y_test_original = self.y_scaler.inverse_transform(y_test)  # Inverse transform for original scale plotting
+        
         if self.mlflow_config.get('enabled', False):
             mlflow.set_experiment(self.mlflow_config.get('experiment_name', f'GPR_{self.mode}'))
-            
+
         with mlflow.start_run():
-            self.gpr.fit(X_train, y_train)
+            self.gpr.fit(X_train, y_train.ravel())  # Flatten y_train for fitting
             
             if self.mlflow_config.get('enabled', False):
-                # Log kernel parameters and any other relevant information
                 mlflow.log_params({"kernel": str(self.gpr.kernel_)})
-                
-            predictions = self.gpr.predict(X_test)
-            mse = mean_squared_error(y_test, predictions)
-            r2 = r2_score(y_test, predictions)
+            
+            predictions_scaled = self.gpr.predict(X_test)
+            self.predictions = self.y_scaler.inverse_transform(predictions_scaled.reshape(-1, 1))  # Inverse transform predictions
+
+            mse = mean_squared_error(self.y_test_original, self.predictions)
+            r2 = r2_score(self.y_test_original, self.predictions)
             
             print(f'MSE: {mse}, R²: {r2}')
             
             if self.mlflow_config.get('enabled', False):
                 mlflow.log_metrics({"MSE": mse, "R2": r2})
+                
+            self.plot_predictions()
+
+    def plot_predictions(self):
+        plt.figure(figsize=(10, 6))
+        plt.scatter(self.y_test_original, self.predictions, edgecolor='k', label='Predictions vs. True Values')
+        plt.plot([self.y_test_original.min(), self.y_test_original.max()], 
+                 [self.y_test_original.min(), self.y_test_original.max()], 'r--', lw=2, label='Identity Line')
+        plt.xlabel('True Values')
+        plt.ylabel('Predictions')
+        plt.title('Predictions vs. True Values')
+        plt.legend()
+        plt.show()
 
     def calculate_GPR(self, data):
         X_train, X_test, y_train, y_test = self.preprocess_data(data)
