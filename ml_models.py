@@ -1,6 +1,9 @@
+import joblib
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import xgboost as xgb
 
 import mlflow
 import mlflow.sklearn
@@ -98,6 +101,11 @@ class RandomForestClassifierWithImportance:
             self.evaluate_model(X_test, y_test)
             self.display_feature_importance(X_train.columns)
 
+             # Save the best model to a .pkl file
+            best_model_filename = f"best_rf_model_{self.mode}.pkl"
+            joblib.dump(self.model, best_model_filename)
+            print(f"Best model saved as {best_model_filename}")
+
     def evaluate_model(self, X_test, y_test):
         predictions = self.model.predict(X_test)
         report = classification_report(y_test, predictions)
@@ -186,6 +194,11 @@ class GaussianProcessRegressorModel:
                 mlflow.log_metrics({"MSE": mse, "R2": r2})
                 
             self.plot_predictions()
+        
+        # Save the best model to a .pkl file
+        best_model_filename = f"best_gpr_model_{self.mode}.pkl"
+        joblib.dump(self.gpr, best_model_filename)
+        print(f"Best model saved as {best_model_filename}")
 
     def plot_predictions(self):
         plt.figure(figsize=(10, 6))
@@ -199,5 +212,69 @@ class GaussianProcessRegressorModel:
         plt.show()
 
     def calculate_GPR(self, data):
+        X_train, X_test, y_train, y_test = self.preprocess_data(data)
+        self.train_and_evaluate(X_train, y_train, X_test, y_test)
+
+
+class XGBoostRegressorModel:
+    def __init__(self, mode='NumericTarget', mlflow_config=None):
+        self.mode = mode
+        self.model = xgb.XGBRegressor(objective ='reg:squarederror')
+        self.mlflow_config = mlflow_config if mlflow_config else {'enabled': True, 'experiment_name': f'XGB_{self.mode}'}
+        self.x_scaler = StandardScaler()
+        self.y_scaler = StandardScaler()
+        self.predictions = None
+        self.y_test_original = None
+
+    def preprocess_data(self, data):
+        X = data[['MedDist', 'MeanHosp', 'Cluster', 'Centre']]
+        y = data[self.mode].values.reshape(-1, 1)  # Reshape y to 2D array for scaler
+
+        # Normalize X
+        X_scaled = self.x_scaler.fit_transform(X)
+
+        # Normalize y
+        y_scaled = self.y_scaler.fit_transform(y).ravel()  # Flatten for XGBoost
+
+        return train_test_split(X_scaled, y_scaled, test_size=0.15, random_state=42)
+
+    def train_and_evaluate(self, X_train, y_train, X_test, y_test):
+        self.y_test_original = self.y_scaler.inverse_transform(y_test.reshape(-1, 1))  # Inverse transform for original scale
+        
+        if self.mlflow_config.get('enabled', False):
+            mlflow.set_experiment(self.mlflow_config.get('experiment_name', f'XGB_{self.mode}'))
+
+        with mlflow.start_run():
+            self.model.fit(X_train, y_train)
+            
+            if self.mlflow_config.get('enabled', False):
+                # Log model parameters
+                mlflow.log_params(self.model.get_params())
+            
+            predictions_scaled = self.model.predict(X_test)
+            self.predictions = self.y_scaler.inverse_transform(predictions_scaled.reshape(-1, 1))
+
+            mse = mean_squared_error(self.y_test_original, self.predictions)
+            r2 = r2_score(self.y_test_original, self.predictions)
+            
+            print(f'MSE: {mse}, R²: {r2}')
+            
+            if self.mlflow_config.get('enabled', False):
+                mlflow.log_metrics({"MSE": mse, "R2": r2})
+                
+            self.plot_predictions()
+
+    def plot_predictions(self):
+        plt.figure(figsize=(10, 6))
+        plt.scatter(self.y_test_original, self.predictions, edgecolor='k', label='Predictions vs. True Values')
+        plt.plot([self.y_test_original.min(), self.y_test_original.max()], 
+                 [self.y_test_original.min(), self.y_test_original.max()], 'r--', lw=2, label='Identity Line')
+        plt.xlabel('True Values')
+        plt.ylabel('Predictions')
+        plt.title('Predictions vs. True Values')
+        plt.legend()
+        plt.show()
+
+    def calculate_XGB(self, data):
         X_train, X_test, y_train, y_test = self.preprocess_data(data)
         self.train_and_evaluate(X_train, y_train, X_test, y_test)
