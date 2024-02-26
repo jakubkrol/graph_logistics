@@ -164,13 +164,9 @@ class GaussianProcessRegressorModel:
 
         # Normalize X
         X_scaled = self.x_scaler.fit_transform(X)
-        # Save the x_scaler
-        joblib.dump(self.x_scaler, f"x_scaler_{self.mode}.pkl")
 
         # Normalize y
         y_scaled = self.y_scaler.fit_transform(y)
-        # Save the y_scaler
-        joblib.dump(self.y_scaler, f"y_scaler_{self.mode}.pkl")
 
         return train_test_split(X_scaled, y_scaled, test_size=0.15, random_state=42)
 
@@ -282,52 +278,3 @@ class XGBoostRegressorModel:
     def calculate_XGB(self, data):
         X_train, X_test, y_train, y_test = self.preprocess_data(data)
         self.train_and_evaluate(X_train, y_train, X_test, y_test)
-
-class ClassifierRegressorPipeline:
-    def __init__(self, classifier_path, regressor_path, x_scaler_path, y_scaler_path):
-        # Load the classifier and regressor models from their respective file paths
-        self.classifier = joblib.load(classifier_path)
-        self.regressor = joblib.load(regressor_path)
-        # Load the scalers
-        self.x_scaler = joblib.load(x_scaler_path)
-        self.y_scaler = joblib.load(y_scaler_path)
-    
-    def predict(self, X):
-        # Use the classifier to predict whether the output should be zero or not
-        # No scaling is applied before using the classifier
-        self.classification_predictions = self.classifier.predict(X)
-        
-        # Initialize an array to hold the final predictions
-        final_predictions = np.zeros(X.shape[0])
-        
-        # For items classified as non-zero, scale X before using the regressor to predict the actual value
-        regressor_indices = np.where(self.classification_predictions != 0)[0]
-        if len(regressor_indices) > 0:
-            X_scaled_for_regressor = self.x_scaler.transform(X[regressor_indices])
-            regressor_predictions_scaled = self.regressor.predict(X_scaled_for_regressor)
-            # Inverse scale the predictions of the regressor
-            regressor_predictions = self.y_scaler.inverse_transform(regressor_predictions_scaled.reshape(-1, 1)).flatten()
-            final_predictions[regressor_indices] = regressor_predictions
-        
-        return final_predictions
-    
-    def evaluate(self, X_test, y_test):
-        self.predictions = self.predict(X_test)
-        
-        # Calculate MSE and R2 metrics
-        mse = mean_squared_error(y_test, self.predictions)
-        r2 = r2_score(y_test, self.predictions)
-        
-        print(f"MSE: {mse}")
-        print(f"R2: {r2}")
-        
-        # Plot true values vs predictions
-        plt.figure(figsize=(10, 6))
-        plt.scatter(y_test, self.predictions, alpha=0.5)
-        plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'k--', lw=2)
-        plt.xlabel('True Values')
-        plt.ylabel('Predictions')
-        plt.title('True Values vs Predictions')
-        plt.show()
-
-
